@@ -1,0 +1,4 @@
+assignments:
+  tst-assitant: writer
+custom_permissions:
+  writer: [web_search]

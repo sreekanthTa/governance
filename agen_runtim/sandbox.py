@@ -1,0 +1,120 @@
+"""Runtime pillar 3 - Sandboxing: isolated sessions with their own execution ring."""
+from __future__ import annotations
+import asyncio
+import concurrent.futures
+import logging
+import sys
+import threading
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from agen_mesh import identity
+
+logger = logging.getLogger(__name__)
+
+_hypervisor = None
+_ready = False
+_lock = threading.Lock()
+
+def _build():
+    global _hypervisor, _ready
+    if _ready:
+        return _hypervisor
+    with _lock:
+        if _ready:
+            return _hypervisor
+        _ready = True
+        try:
+            from agent_runtime import Hypervisor
+            _hypervisor = Hypervisor()
+        except Exception as exc:
+            logger.warning("sandbox init failed: %s", exc)
+            _hypervisor = None
+    return _hypervisor
+
+def _run(coro):
+    """Run an async Hypervisor call from sync code, even inside a running loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+def create() -> str | None:
+    """Create and activate an isolated session for our agent; return its id."""
+    h = _build()
+    if h is None:
+        return None
+    from agent_runtime import SessionConfig
+
+    async def _go():
+        agent = identity.did() or "rag-assistant"
+        session = await h.create_session(SessionConfig(), agent)
+        sid = session.sso.session_id
+        # A session needs at least one participant before it can be activated,
+        # so join our agent first, then activate.
+        await h.join_session(sid, agent, sigma_raw=0.9)
+        await h.activate_session(sid)
+        return sid
+
+    try:
+        return _run(_go())
+    except Exception as exc:
+        logger.warning("sandbox create failed: %s", exc)
+        return None
+
+def join(session_id: str, sigma: float = 0.9) -> str | None:
+    """Join our agent to a session; return the ring it was assigned."""
+    h = _build()
+    if h is None:
+        return None
+    try:
+        ring = _run(h.join_session(session_id, identity.did() or "rag-assistant", sigma_raw=sigma))
+        return ring.name if ring is not None else None
+    except Exception as exc:
+        logger.warning("sandbox join failed: %s", exc)
+        return None
+
+def monitor() -> list:
+    """Sessions flagged for behavioral drift."""
+    h = _build()
+    if h is None:
+        return []
+    try:
+        return _run(h.monitor_sessions())
+    except Exception as exc:
+        logger.warning("sandbox monitor failed: %s", exc)
+        return []
+
+def close(session_id: str) -> str | None:
+    """Terminate a session; return the final state."""
+    h = _build()
+    if h is None:
+        return None
+    try:
+        return _run(h.terminate_session(session_id))
+    except Exception as exc:
+        logger.warning("sandbox close failed: %s", exc)
+        return None
+
+def main() -> None:
+    """Run a short sandbox session lifecycle demo."""
+    logging.basicConfig(level=logging.WARNING)
+    session_id = create()
+    if session_id is None:
+        print("sandbox session: unavailable")
+        return
+
+    print("session:", session_id)
+    try:
+        print("monitor:", monitor())
+    finally:
+        print("closed:", close(session_id))
+
+
+if __name__ == "__main__":
+    main()

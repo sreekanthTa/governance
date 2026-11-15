@@ -1,0 +1,68 @@
+"""SRE pillar 4 - Circuit Breaker: stop hammering a failing dependency."""
+from __future__ import annotations
+import logging
+import threading
+
+from agen_mesh import identity
+
+logger = logging.getLogger(__name__)
+
+_FAILURE_THRESHOLD = 5
+
+_breaker = None
+_ready = False
+_lock = threading.Lock()
+
+def _build():
+    global _breaker, _ready
+    if _ready:
+        return _breaker
+    with _lock:
+        if _ready:
+            return _breaker
+        _ready = True
+        try:
+            from agent_sre.cascade import CircuitBreaker, CircuitBreakerConfig
+            _breaker = CircuitBreaker(
+                identity.did() or "rag-assistant",
+                CircuitBreakerConfig(failure_threshold=_FAILURE_THRESHOLD),
+            )
+        except Exception as exc:
+            logger.warning("circuit init failed: %s", exc)
+            _breaker = None
+            _ready = False
+    return _breaker
+
+def call(func, *args, fallback=None, **kwargs):
+    """Run func through the breaker; returns fallback if the circuit is open or the call fails."""
+    breaker = _build()
+    if breaker is None:
+        return fallback
+    try:
+        return breaker.call(func, *args, fallback=fallback, **kwargs)
+    except Exception as exc:
+        logger.warning("circuit call failed: %s", exc)
+        return fallback
+
+def record(success: bool) -> None:
+    """Report one outcome to the breaker."""
+    breaker = _build()
+    if breaker is None:
+        return
+    if success:
+        breaker.record_success()
+    else:
+        breaker.record_failure()
+
+def state() -> str:
+    """'CLOSED' (healthy) or 'OPEN' (tripped)."""
+    breaker = _build()
+    if breaker is None:
+        return "unknown"
+    return breaker.get_state().name
+
+def reset() -> None:
+    """Force the breaker back to closed."""
+    breaker = _build()
+    if breaker is not None:
+        breaker.reset()

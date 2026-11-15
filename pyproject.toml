@@ -1,0 +1,11 @@
+[project]
+name = "governed-ai-assistant"
+version = "0.1.0"
+description = "A beginner-friendly starter project for learning Microsoft's Agent Governance Toolkit."
+requires-python = ">=3.11"
+dependencies = [
+    "agent-control-specification>=0.3.1b1",
+    "agent-governance-toolkit[full]>=4.1.0",
+    "langchain-groq>=1.1.3",
+    "python-dotenv>=1.2.4",
+]

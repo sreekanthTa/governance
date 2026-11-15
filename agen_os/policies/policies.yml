@@ -1,0 +1,26 @@
+version: "1.0"
+name: strict
+defaults:
+  action: deny
+rules:
+  - name: allow-web-search
+    condition:
+      field: tool_name
+      operator: eq
+      value: web_search
+    action: allow
+    priority: 100
+  - name: allow-read-file
+    condition:
+      field: tool_name
+      operator: eq
+      value: read_file
+    action: allow
+    priority: 100
+  - name: web-search
+    condition:
+      field: tool_name
+      operator: eq
+      value: test
+    action: allow
+
